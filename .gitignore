@@ -1,0 +1,20 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
+*.py[cod]
+
+# Trained models and backups
+backups/
+checkpoints/
+checkpoints_double/
+checkpoints_dueling/
+checkpoints_strategy/
+checkpoints_strategy_v2/
+checkpoints_strategy_v3/
+
+# Generated evaluation results
+*_results.csv
+evaluation*.csv
