@@ -13,6 +13,7 @@ const els = {
 
 let game = null;
 let agentOptions = [];
+const supportedAgentNames = new Set(["Greedy Heuristic", "Expectimax"]);
 let aiRunning = false;
 let aiLoopToken = 0;
 let busy = false;
@@ -140,7 +141,7 @@ function renderOverlay() {
 }
 
 function render() {
-  agentOptions = game.agents || agentOptions;
+  agentOptions = (game.agents || agentOptions).filter((item) => supportedAgentNames.has(item.name));
   renderBoard();
   renderAgents();
   els.score.textContent = Number(game.score).toLocaleString();

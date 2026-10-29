@@ -4,8 +4,8 @@ import threading
 import numpy as np
 import pytest
 
-from arena_agents import ArenaAdapter, Decision
 from game import Game2048
+from web_agents import ArenaAdapter, Decision
 from web_game import (
     AgentFailure,
     GameService,
@@ -157,37 +157,12 @@ def test_agent_error_does_not_change_game_state():
     assert after["status"] == "error"
 
 
-def test_legacy_strategy_v1_is_disabled_when_mapping_is_unverified():
-    from web_game import AGENT_DESCRIPTIONS
-
-    assert "unverified" in AGENT_DESCRIPTIONS["Strategy V1 DQN"]
-    app = service()
-    option = next(item for item in app.get_game(app.new_game()["id"])["agents"] if item["name"] == "Strategy V1 DQN")
-    assert option["available"] is False
-
-
-def test_missing_dqn_checkpoints_are_disabled_without_fallback(monkeypatch, tmp_path):
+def test_production_agent_list_only_contains_cpu_web_agents():
     from web_game import build_web_adapters
 
-    monkeypatch.setenv("DQN_SHAPED_CHECKPOINT", str(tmp_path / "missing-shaped.pt"))
-    monkeypatch.setenv("DQN_RAW_SCORE_CHECKPOINT", str(tmp_path / "missing-raw.pt"))
-    adapters = build_web_adapters()
-    for name in ("Original Dueling Double DQN", "Raw-Score Dueling DQN"):
-        assert adapters[name].metadata()["loading_status"] == "unavailable"
-        assert name in adapters[name].metadata()["agent_id"]
-
-
-def test_oversized_checkpoint_is_disabled_before_loading(monkeypatch, tmp_path):
-    from web_game import build_web_adapters
-
-    checkpoint = tmp_path / "oversized.pt"
-    checkpoint.write_bytes(b"0" * (1024 * 1024 + 1))
-    monkeypatch.setenv("DQN_SHAPED_CHECKPOINT", str(checkpoint))
-    monkeypatch.setenv("DQN_RAW_SCORE_CHECKPOINT", str(tmp_path / "missing.pt"))
-    monkeypatch.setenv("WEB_MAX_CHECKPOINT_MB", "1")
-    adapter = build_web_adapters()["Original Dueling Double DQN"]
-    assert adapter.metadata()["loading_status"] == "unavailable"
-    assert "exceeds WEB_MAX_CHECKPOINT_MB" in adapter.metadata()["error"]
+    app = GameService(adapters=build_web_adapters())
+    names = [item["name"] for item in app.new_game(seed=15)["agents"]]
+    assert names == ["Greedy Heuristic", "Expectimax"]
 
 
 def test_canonical_benchmarks_are_loaded_from_verified_artifacts():
@@ -197,7 +172,8 @@ def test_canonical_benchmarks_are_loaded_from_verified_artifacts():
         adapters={"Expectimax": FirstLegalAdapter()},
         benchmark_path=Path(__file__).resolve().parents[1] / "results/canonical",
     ).benchmarks()
-    assert len(results["rows"]) == 4
+    assert len(results["rows"]) == 2
+    assert {row["agent"] for row in results["rows"]} == {"Expectimax depth 2", "Greedy Heuristic"}
     expectimax = next(row for row in results["rows"] if row["agent"] == "Expectimax depth 2")
     assert expectimax["mean_score"] == 14450.44
     assert expectimax["reached_2048_pct"] == 15.0

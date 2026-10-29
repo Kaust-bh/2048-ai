@@ -11,7 +11,6 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass, field
 import json
-import os
 from pathlib import Path
 import threading
 import time
@@ -20,14 +19,11 @@ from uuid import uuid4
 
 import numpy as np
 
-from arena_agents import (
+from web_agents import (
     ArenaAdapter,
-    DQNAdapter,
     Decision,
     ExpectimaxAdapter,
     HeuristicAdapter,
-    UnavailableAdapter,
-    project_path,
 )
 from game import ACTIONS, Game2048
 
@@ -84,67 +80,15 @@ class GameSession:
 AGENT_DESCRIPTIONS = {
     "Greedy Heuristic": "Chooses the legal move with the strongest immediate board heuristic.",
     "Expectimax": "Searches player moves and averages the 2 (90%) / 4 (10%) tile-spawn outcomes.",
-    "Original Dueling Double DQN": "Learned dueling Q-network; this older checkpoint predates explicit reward-mode metadata.",
-    "Raw-Score Dueling DQN": "Learned dueling Q-network trained with merge points as reward.",
-    "Strategy V1 DQN": "Disabled because this legacy checkpoint has an unverified action mapping.",
 }
 
 
 def build_web_adapters() -> Dict[str, ArenaAdapter]:
-    """Load supported agents once; expose missing or invalid checkpoints as disabled."""
-    loaded: Dict[str, ArenaAdapter] = {
+    """Create the CPU-only agents supported by the browser application."""
+    return {
         "Greedy Heuristic": HeuristicAdapter(),
         "Expectimax": ExpectimaxAdapter(depth=2),
     }
-    maximum_mb = max(1.0, float(os.getenv("WEB_MAX_CHECKPOINT_MB", "25")))
-    checkpoint_specs = (
-        (
-            "Original Dueling Double DQN",
-            os.getenv("DQN_SHAPED_CHECKPOINT", "checkpoints_dueling/best_dqn_2048.pt"),
-            "shaped",
-        ),
-        (
-            "Raw-Score Dueling DQN",
-            os.getenv("DQN_RAW_SCORE_CHECKPOINT", "checkpoints_dueling_raw_score/best_dqn_2048.pt"),
-            "raw_score",
-        ),
-    )
-    for name, relative_path, expected_reward in checkpoint_specs:
-        candidate = Path(relative_path).expanduser()
-        checkpoint_path = candidate if candidate.is_absolute() else project_path(relative_path)
-        if not checkpoint_path.is_file():
-            loaded[name] = UnavailableAdapter(name, f"missing checkpoint: {relative_path}")
-            continue
-        if checkpoint_path.stat().st_size > maximum_mb * 1024 * 1024:
-            loaded[name] = UnavailableAdapter(
-                name,
-                f"checkpoint exceeds WEB_MAX_CHECKPOINT_MB ({maximum_mb:g} MB)",
-            )
-            continue
-        try:
-            adapter = DQNAdapter(name, checkpoint_path)
-            metadata = adapter.metadata()
-            if metadata.get("architecture") != "dueling_double_dqn":
-                raise ValueError("checkpoint architecture is incompatible")
-            reported_reward = adapter.checkpoint.get("metadata", {}).get("reward_mode")
-            # Older shaped checkpoints predate explicit reward metadata.
-            # Their state dict and architecture still load exactly; reject
-            # only a checkpoint that explicitly declares the other mode.
-            if reported_reward is not None and reported_reward != expected_reward:
-                raise ValueError(
-                    f"checkpoint reward mode is {reported_reward!r}; expected {expected_reward!r}"
-                )
-            loaded[name] = adapter
-        except Exception as exc:
-            loaded[name] = UnavailableAdapter(
-                name,
-                f"checkpoint could not be loaded: {type(exc).__name__}: {exc}",
-            )
-    loaded["Strategy V1 DQN"] = UnavailableAdapter(
-        "Strategy V1 DQN",
-        "disabled: the legacy checkpoint does not verify its action mapping",
-    )
-    return loaded
 
 
 class GameService:
@@ -192,22 +136,15 @@ class GameService:
         session.move_count = snapshot.move_count
 
     def _agent_options(self) -> list[dict]:
-        names = (
-            "Greedy Heuristic",
-            "Expectimax",
-            "Original Dueling Double DQN",
-            "Raw-Score Dueling DQN",
-            "Strategy V1 DQN",
-        )
         options = []
-        for name in names:
-            adapter = self.adapters.get(name)
-            reason = getattr(adapter, "error", None) if adapter else "not configured"
+        for name in self.adapters:
+            if name not in AGENT_DESCRIPTIONS:
+                continue
             options.append({
                 "name": name,
-                "available": adapter is not None and not isinstance(adapter, UnavailableAdapter),
+                "available": True,
                 "description": AGENT_DESCRIPTIONS[name],
-                "reason": reason,
+                "reason": None,
             })
         return options
 
@@ -305,7 +242,7 @@ class GameService:
                 raise StateConflict("start a new game before asking AI to play")
             if control == "ai":
                 adapter = self.adapters.get(session.agent_name)
-                if adapter is None or isinstance(adapter, UnavailableAdapter):
+                if adapter is None:
                     raise InvalidRequest(f"{session.agent_name} is unavailable")
             session.generation += 1
             session.version += 1
@@ -319,11 +256,6 @@ class GameService:
             session = self._get(session_id)
             if name not in self.adapters:
                 raise InvalidRequest("unknown agent")
-            if name == "Strategy V1 DQN":
-                raise InvalidRequest(AGENT_DESCRIPTIONS[name])
-            adapter = self.adapters[name]
-            if isinstance(adapter, UnavailableAdapter):
-                raise InvalidRequest(f"{name} is unavailable: {adapter.error}")
             if depth not in (1, 2, 3):
                 raise InvalidRequest("Expectimax depth must be between 1 and 3")
             session.agent_name = name
@@ -337,7 +269,7 @@ class GameService:
 
     def _decision_adapter(self, name: str, depth: int) -> ArenaAdapter:
         adapter = self.adapters.get(name)
-        if adapter is None or isinstance(adapter, UnavailableAdapter):
+        if adapter is None:
             raise AgentFailure(f"{name} is unavailable")
         if name == "Expectimax" and isinstance(adapter, ExpectimaxAdapter):
             return ExpectimaxAdapter(depth)
@@ -444,8 +376,6 @@ class GameService:
         summaries = {
             "Expectimax depth 2": ("expectimax_depth_2_seeds", "expectimax_strategy_score", "expectimax"),
             "Greedy Heuristic": ("heuristic_strategy_v1_seeds", "heuristic_strategy_score", "hand_coded_strategy_score"),
-            "Original Dueling Double DQN": ("neural_dueling_seeds", "best_dqn_2048.pt", "dueling_double_dqn"),
-            "Raw-Score Dueling DQN": ("neural_dueling_raw_score_seeds", "best_dqn_2048.pt", "dueling_double_dqn"),
         }
         rows = []
         for name, (folder, agent_id, architecture) in summaries.items():
