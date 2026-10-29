@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#171c20">
+  <meta name="description" content="Play 2048 against your own strategy or let a heuristic, Expectimax, or DQN agent take over.">
+  <title>2048 AI Lab</title>
+  <script>
+    (() => {
+      let theme = "dark";
+      try {
+        const savedTheme = localStorage.getItem("2048-ai-theme");
+        if (savedTheme === "dark" || savedTheme === "light") theme = savedTheme;
+      } catch (_) {
+        // Storage can be disabled. Dark remains the required default.
+      }
+      document.documentElement.dataset.theme = theme;
+      document.querySelector('meta[name="theme-color"]').content = theme === "dark" ? "#171c20" : "#f4f2ec";
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="wordmark" href="/" aria-label="2048 AI Lab home"><span class="mark">2<span>0</span></span><span>2048 <b>AI LAB</b></span></a>
+      <div class="top-note"><span class="live-dot"></span> A small experiment in intelligent play</div>
+      <div class="top-actions">
+        <a class="source-link" href="https://github.com/Kaust-bh/2048-ai" target="_blank" rel="noreferrer">PROJECT NOTES <span>↗</span></a>
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch to light mode" title="Switch to light mode">
+          <svg class="theme-icon icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg>
+          <svg class="theme-icon icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.4 15.2A8.6 8.6 0 0 1 8.8 3.6 8.8 8.8 0 1 0 20.4 15.2Z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <main>
+      <section class="intro">
+        <div>
+          <p class="eyebrow">HUMAN × MACHINE</p>
+          <h1>One board.<br><em>Different minds.</em></h1>
+          <p class="lede">Play a few moves, then hand the exact board to an AI. Watch its choices unfold, take control back, or compare the agents behind the move.</p>
+        </div>
+        <div class="intro-stamp"><span>01</span><span>GAME<br>SESSION</span><i>↘</i></div>
+      </section>
+
+      <section class="workspace" aria-label="2048 game">
+        <div class="play-column">
+          <div class="score-row">
+            <div class="score-card"><span>SCORE</span><strong id="score">0</strong></div>
+            <div class="score-card"><span>BEST</span><strong id="best-score">0</strong></div>
+            <div class="score-card compact"><span>MOVES</span><strong id="moves">0</strong></div>
+            <div class="score-card compact"><span>TOP TILE</span><strong id="max-tile">—</strong></div>
+          </div>
+
+          <div class="board-wrap">
+            <div id="board" class="board" role="grid" aria-label="2048 board"></div>
+            <div id="overlay" class="board-overlay" hidden>
+              <div class="overlay-card"><span class="eyebrow">SESSION UPDATE</span><h2 id="overlay-title"></h2><p id="overlay-copy"></p><button id="overlay-new" class="button button-primary">Start a new game <span>↗</span></button></div>
+            </div>
+          </div>
+
+          <div class="game-actions">
+            <button id="new-game" class="button button-dark"><span class="button-icon">↻</span> New game</button>
+            <button id="undo" class="button button-light" disabled><span class="button-icon">↶</span> Undo</button>
+            <p class="keyboard-hint"><kbd>←</kbd><kbd>↑</kbd><kbd>→</kbd><kbd>↓</kbd> or WASD <span>·</span> swipe on touch</p>
+          </div>
+        </div>
+
+        <aside class="control-panel">
+          <div class="panel-head"><span class="eyebrow">CONTROL DECK</span><span id="status-pill" class="status-pill"><i></i><span>HUMAN READY</span></span></div>
+
+          <div class="mode-card">
+            <div class="mode-icon" aria-hidden="true">⌘</div>
+            <div><span class="micro-label">CURRENT PILOT</span><strong id="pilot-label">You</strong><small id="pilot-subtitle">Keyboard · touch · your call</small></div>
+          </div>
+
+          <label class="field-label" for="agent-select">AI AGENT</label>
+          <select id="agent-select" class="select-control" aria-describedby="agent-description"></select>
+          <p id="agent-description" class="field-description"></p>
+
+          <div id="depth-row" class="setting-row">
+            <div><span class="field-label">SEARCH DEPTH</span><small>More depth means more thinking</small></div>
+            <div class="stepper"><button id="depth-minus" aria-label="Decrease search depth">−</button><output id="depth-value">2</output><button id="depth-plus" aria-label="Increase search depth">+</button></div>
+          </div>
+
+          <div class="divider"></div>
+
+          <button id="ai-toggle" class="button button-ai" disabled><span class="ai-button-symbol">✳</span><span id="ai-toggle-label">Let AI Play</span><span class="button-arrow">↗</span></button>
+          <p id="control-hint" class="control-hint">The AI takes over from this exact board. Your game and random sequence stay intact.</p>
+
+          <div class="setting-row speed-row">
+            <div><span class="field-label">PLAYBACK</span><small>Move interval</small></div>
+            <select id="speed-select" class="speed-select" aria-label="AI playback speed"><option value="1100">Relaxed</option><option value="500" selected>Steady</option><option value="170">Quick</option></select>
+          </div>
+
+          <details class="diagnostics">
+            <summary>Last decision <span>＋</span></summary>
+            <div id="diagnostic-content" class="diagnostic-content">Make a move to see decision details.</div>
+          </details>
+        </aside>
+      </section>
+
+      <section class="benchmark-section">
+        <div class="section-heading"><div><p class="eyebrow">BEFORE THIS SESSION</p><h2>Different strategies,<br><em>same starting line.</em></h2></div><p class="section-note">Historical evaluation runs are separate from the live game above. Scores are averages across 100 games, not promises about your current board.</p></div>
+        <div class="table-scroll"><table><thead><tr><th>AGENT</th><th>MEAN SCORE</th><th>MEAN MOVES</th><th>TOP TILE*</th><th>REACHED 2048</th></tr></thead><tbody id="benchmark-rows"><tr><td colspan="5" class="table-loading">Loading saved evaluation summaries…</td></tr></tbody></table></div>
+        <p id="benchmark-note" class="benchmark-note">*Highest tile observed in the saved games. Runs use the same initial seeds and move cap; tile spawns can diverge as policies take different actions.</p>
+      </section>
+    </main>
+
+    <footer><span>BUILT FROM A SMALL 2048 ENVIRONMENT + A FEW WAYS TO THINK.</span><span>YOUR MOVE, THEN THE MACHINE'S.</span></footer>
+  </div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

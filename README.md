@@ -54,7 +54,33 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-The listed runtime dependencies are NumPy, PyTorch, Pygame, and Matplotlib. The test suite uses pytest; install it separately with `python -m pip install pytest` if it is not already available. The DQN selects CUDA when PyTorch reports it available and otherwise uses CPU.
+The listed runtime dependencies are NumPy, PyTorch, Pygame, Matplotlib, FastAPI, and Uvicorn. The test suite uses pytest; install it separately with `python -m pip install pytest` if it is not already available. The DQN selects CUDA when PyTorch reports it available and otherwise uses CPU.
+
+## Browser demo
+
+The FastAPI browser app reuses `Game2048` and the existing agent adapters. Start it locally after installing `requirements.txt`:
+
+```bash
+uvicorn web_app:app --reload
+```
+
+Open <http://127.0.0.1:8000>. Use the arrow keys or WASD, or swipe on a touch screen. You can undo the last move, hand the current board to an agent with **Let AI Play**, and stop it with **Take Control**. The server keeps each browser game in a separate in-memory session. Undo also restores the game's random-generator state. Sessions are temporary and are cleared when the service restarts.
+
+The web app offers Greedy Heuristic and Expectimax. The two Dueling Double DQN agents become selectable only when their matching, compatible checkpoints are available and below `WEB_MAX_CHECKPOINT_MB` (25 MB by default). Checkpoint locations can be set with `DQN_SHAPED_CHECKPOINT` and `DQN_RAW_SCORE_CHECKPOINT`; missing or invalid weights appear disabled. Strategy V1 is disabled because its checkpoint does not verify its action mapping. Expectimax search runs in a worker thread, and a result is committed only if the session version still matches the board used for its decision.
+
+The comparison table on the page loads saved canonical summaries from `results/canonical/`. It labels those historical results separately from the live session. All included 100-game comparisons use seeds 1000–1099, exploration disabled, and a 5,000-move cap; different policies can consume different later spawn draws as their actions diverge.
+
+### Deployment
+
+For a local production-style run, activate the virtual environment and start the ASGI app with:
+
+```bash
+uvicorn web_app:app --host 0.0.0.0 --port 8000
+```
+
+For Render, connect the Git repository and create a Blueprint from `render.yaml`. It installs dependencies with `pip install -r requirements.txt`, then starts `web_app:app` on `0.0.0.0:$PORT`; Render supplies `PORT`. The `/healthz` endpoint is configured as the health check. The same start command is also in `Procfile` for platforms that use it.
+
+A clean Git deployment includes the Greedy Heuristic and Expectimax agents and the canonical evaluation summaries. The DQN weight files are deliberately excluded from Git. The two browser DQN checkpoints currently present locally are about 2.1 MB each, but they will not be available in a clean Render deployment unless you provision the files separately. To enable them, place compatible weights in the running service's filesystem (for example, via a private artifact download or persistent storage) and set `DQN_SHAPED_CHECKPOINT` and `DQN_RAW_SCORE_CHECKPOINT` to their paths. Each checkpoint must be below `WEB_MAX_CHECKPOINT_MB` (25 MB by default). Strategy V1 remains disabled because its action mapping is unverified. The service keeps sessions in memory; use a single web instance for this demo, because horizontal scaling requires shared session storage.
 
 ## Play and train
 
@@ -123,7 +149,7 @@ These commands require the relevant checkpoint files. Evaluation writes `games.c
 
 ## Tests
 
-Run the existing suite with:
+Run the existing and browser-session service tests with:
 
 ```bash
 python -m pytest -q

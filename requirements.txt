@@ -2,3 +2,5 @@ numpy>=1.26
 torch>=2.2
 pygame>=2.5
 matplotlib>=3.8
+fastapi>=0.110
+uvicorn>=0.27
