@@ -1,0 +1,4 @@
+game,seed,score,max_tile,moves,reached_2048,agent_id,checkpoint_path
+1,1000,996,128,100,False,heuristic_strategy_score,
+2,1001,1028,128,100,False,heuristic_strategy_score,
+3,1002,1084,128,100,False,heuristic_strategy_score,

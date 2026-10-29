@@ -13,6 +13,78 @@ from game import Game2048
 from agent import DQNAgent
 
 
+REWARD_MODES = ("shaped", "raw_score")
+
+
+def default_output_dir(reward_mode):
+    if reward_mode not in REWARD_MODES:
+        raise ValueError(
+            "reward_mode must be 'shaped' or 'raw_score'"
+        )
+    if reward_mode == "raw_score":
+        return "checkpoints_dueling_raw_score"
+    return "checkpoints_dueling"
+
+
+def resolve_output_dir(reward_mode, output_dir=None):
+    return output_dir or default_output_dir(reward_mode)
+
+
+def resolve_resume_paths(reward_mode, output_dir=None, resume_path=""):
+    if not resume_path:
+        return resolve_output_dir(reward_mode, output_dir), ""
+
+    checkpoint_path = os.path.realpath(resume_path)
+    if output_dir is None:
+        selected_output_dir = os.path.dirname(checkpoint_path)
+    else:
+        selected_output_dir = os.path.realpath(output_dir)
+
+    if os.path.dirname(checkpoint_path) != selected_output_dir:
+        raise ValueError(
+            "resume checkpoint must be inside the selected output directory"
+        )
+
+    return selected_output_dir, checkpoint_path
+
+
+def validate_output_directory(output_dir, resume_path=""):
+    if not resume_path and os.path.exists(output_dir):
+        raise FileExistsError(
+            f"refusing to overwrite existing training output: {output_dir}"
+        )
+
+
+def checkpoint_metadata(args, reward_mode):
+    return {
+        "args": vars(args),
+        "model": "dueling_double_dqn",
+        "reward_mode": reward_mode,
+    }
+
+
+def validate_resume_checkpoint(path, reward_mode):
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"Checkpoint not found: {path}")
+
+    checkpoint = torch.load(
+        path, map_location="cpu", weights_only=False
+    )
+    checkpoint_mode = checkpoint.get("metadata", {}).get(
+        "reward_mode"
+    )
+    if checkpoint_mode not in REWARD_MODES:
+        raise ValueError(
+            "resume checkpoint is missing explicit reward_mode metadata"
+        )
+    if checkpoint_mode != reward_mode:
+        raise ValueError(
+            f"resume checkpoint reward_mode={checkpoint_mode!r} "
+            f"does not match requested reward_mode={reward_mode!r}"
+        )
+    return checkpoint
+
+
 def evaluate_agent(agent, games=50, seed=10_000, max_moves=5000):
     """Evaluate without exploration on reproducible game seeds."""
     scores = []
@@ -87,13 +159,28 @@ def write_csv(path, rows):
 
 
 def train(args):
-    os.makedirs(args.out, exist_ok=True)
+    reward_mode = getattr(args, "reward_mode", "shaped")
+    output_dir, resume_path = resolve_resume_paths(
+        reward_mode,
+        getattr(args, "out", None),
+        getattr(args, "resume", ""),
+    )
+
+    validate_output_directory(output_dir, resume_path)
+
+    if resume_path:
+        validate_resume_checkpoint(resume_path, reward_mode)
+
+    os.makedirs(output_dir, exist_ok=True)
 
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    env = Game2048(seed=args.seed)
+    env = Game2048(
+        seed=args.seed,
+        reward_mode=reward_mode,
+    )
 
     agent = DQNAgent(
         learning_rate=args.lr,
@@ -107,14 +194,9 @@ def train(args):
 
     start_episode = 0
 
-    if args.resume:
-        if not os.path.exists(args.resume):
-            raise FileNotFoundError(
-                f"Checkpoint not found: {args.resume}"
-            )
-
+    if resume_path:
         checkpoint = agent.load(
-            args.resume,
+            resume_path,
             load_optimizer=True,
         )
         start_episode = int(checkpoint.get("episode", 0))
@@ -124,23 +206,23 @@ def train(args):
             "Replay buffer starts empty."
         )
 
-    log_path = os.path.join(args.out, "training.csv")
+    log_path = os.path.join(output_dir, "training.csv")
     checkpoint_path = os.path.join(
-        args.out, "dqn_2048.pt"
+        output_dir, "dqn_2048.pt"
     )
     best_path = os.path.join(
-        args.out, "best_dqn_2048.pt"
+        output_dir, "best_dqn_2048.pt"
     )
     eval_log_path = os.path.join(
-        args.out, "evaluation.csv"
+        output_dir, "evaluation.csv"
     )
 
     resume_log = bool(
-        args.resume and os.path.exists(log_path)
+        resume_path and os.path.exists(log_path)
     )
     best_score = float("-inf")
 
-    if args.resume and os.path.exists(best_path):
+    if resume_path and os.path.exists(best_path):
         saved = torch.load(
             best_path, map_location="cpu", weights_only=False
         )
@@ -153,7 +235,7 @@ def train(args):
     with open(log_path, mode, newline="") as f:
         fields = [
             "episode", "score", "max_tile",
-            "moves", "epsilon", "mean_loss",
+            "moves", "epsilon", "mean_loss", "reward_mode",
         ]
         writer = csv.DictWriter(f, fieldnames=fields)
 
@@ -216,6 +298,7 @@ def train(args):
                     round(float(np.mean(losses)), 6)
                     if losses else ""
                 ),
+                "reward_mode": reward_mode,
             }
 
             writer.writerow(row)
@@ -241,10 +324,7 @@ def train(args):
                 agent.save(
                     checkpoint_path,
                     episode=episode,
-                    metadata={
-                        "args": vars(args),
-                        "model": "dueling_double_dqn",
-                    },
+                    metadata=checkpoint_metadata(args, reward_mode),
                 )
                 print(f"Saved {checkpoint_path}")
 
@@ -273,7 +353,7 @@ def train(args):
 
                 write_csv(
                     os.path.join(
-                        args.out,
+                        output_dir,
                         f"eval_games_ep{episode}.csv",
                     ),
                     eval_rows,
@@ -306,8 +386,7 @@ def train(args):
                         best_path,
                         episode=episode,
                         metadata={
-                            "args": vars(args),
-                            "model": "dueling_double_dqn",
+                            **checkpoint_metadata(args, reward_mode),
                             "best_eval_mean_score": best_score,
                             "best_eval_metrics": metrics,
                         },
@@ -350,8 +429,11 @@ if __name__ == "__main__":
     parser.add_argument("--log-every", type=int, default=50)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
-        "--out", default="checkpoints_dueling"
+        "--out", default=None
     )
     parser.add_argument("--resume", default="")
+    parser.add_argument(
+        "--reward-mode", choices=REWARD_MODES, default="shaped"
+    )
 
     train(parser.parse_args())

@@ -1,0 +1,33 @@
+{
+  "metadata": {
+    "agent_id": "heuristic_strategy_score",
+    "architecture": "hand_coded_strategy_score",
+    "checkpoint_path": null,
+    "evaluation": {
+      "environment": "Game2048",
+      "exploration": "disabled",
+      "games": 3,
+      "max_moves": 100,
+      "rng_note": "Seeds reproduce the initial board. Later tile draws can differ when policies take different numbers of moves.",
+      "seeds": [
+        1000,
+        1001,
+        1002
+      ],
+      "state_representation_version": "log2_tile_v1"
+    },
+    "git_revision": "c032bb4caa5da1587b241496b6373a30429f1213",
+    "state_representation_version": "log2_tile_v1"
+  },
+  "summary": {
+    "games": 3,
+    "max_tile_distribution": {
+      "128": 3
+    },
+    "mean_moves": 100.0,
+    "mean_score": 1036.0,
+    "median_score": 1028.0,
+    "reached_2048_pct": 0.0,
+    "score_stddev": 36.368484525295614
+  }
+}

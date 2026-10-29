@@ -131,8 +131,13 @@ def strategy_score(board):
 
 
 class Game2048:
-    def __init__(self, seed=None):
+    def __init__(self, seed=None, reward_mode="shaped"):
+        if reward_mode not in ("shaped", "raw_score"):
+            raise ValueError(
+                "reward_mode must be 'shaped' or 'raw_score'"
+            )
         self.rng = np.random.default_rng(seed)
+        self.reward_mode = reward_mode
         self.reset()
 
     def reset(self):
@@ -210,7 +215,8 @@ class Game2048:
         changed = not np.array_equal(new_board, self.board)
 
         if not changed:
-            return self.board.copy(), -0.1, self.done, {
+            reward = 0.0 if self.reward_mode == "raw_score" else -0.1
+            return self.board.copy(), reward, self.done, {
                 "score_gained": 0,
                 "invalid_move": True,
                 "score": self.score,
@@ -227,12 +233,15 @@ class Game2048:
 
         new_strategy = strategy_score(self.board)
 
-        reward = float(np.log2(gained)) if gained > 0 else 0.0
-        reward -= 0.01
-        reward += 0.2 * (new_strategy - old_strategy)
+        if self.reward_mode == "raw_score":
+            reward = float(gained)
+        else:
+            reward = float(np.log2(gained)) if gained > 0 else 0.0
+            reward -= 0.01
+            reward += 0.2 * (new_strategy - old_strategy)
 
-        if self.done:
-            reward -= 2.0
+            if self.done:
+                reward -= 2.0
 
         return self.board.copy(), reward, self.done, {
             "score_gained": gained,

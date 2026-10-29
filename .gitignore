@@ -11,6 +11,7 @@ backups/
 checkpoints/
 checkpoints_double/
 checkpoints_dueling/
+checkpoints_dueling_raw_score/
 checkpoints_strategy/
 checkpoints_strategy_v2/
 checkpoints_strategy_v3/

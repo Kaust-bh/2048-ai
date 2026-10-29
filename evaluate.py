@@ -1,46 +1,69 @@
-"""Evaluate a trained model without exploration."""
+"""Evaluate a trained model with the canonical evaluation framework."""
+
 import argparse
-import csv
 import os
-import numpy as np
-from game import Game2048
+
 from agent import DQNAgent
+from canonical_evaluation import (
+    EvaluationConfig,
+    evaluate_policy,
+    make_seed_list,
+    write_results,
+)
 
 
-def evaluate(checkpoint, games=100, seed=1000, csv_path="evaluation.csv"):
+def evaluate(
+    checkpoint_path,
+    games=100,
+    seed=1000,
+    csv_path="results/canonical/games.csv",
+    max_moves=5000,
+    seeds=None,
+):
+    """Evaluate one checkpoint and write canonical results."""
+    evaluation_seeds = tuple(
+        int(value) for value in (
+            seeds if seeds is not None else make_seed_list(games, seed)
+        )
+    )
+    config = EvaluationConfig(
+        seeds=evaluation_seeds,
+        max_moves=max_moves,
+    )
+
     agent = DQNAgent(seed=seed)
-    agent.load(checkpoint)
+    checkpoint = agent.load(checkpoint_path)
     agent.epsilon = 0.0
-    scores, tiles, moves_list = [], [], []
-    rows = []
-    for i in range(games):
-        env = Game2048(seed=seed + i)
-        state = env.state_vector()
-        done, moves = False, 0
-        while not done and moves < 5000:
-            action = agent.act(state, explore=False, valid_actions=env.valid_actions())
-            _, _, done, _ = env.step(action)
-            state = env.state_vector()
-            moves += 1
-        scores.append(env.score)
-        tiles.append(int(env.board.max()))
-        moves_list.append(moves)
-        rows.append({"game": i + 1, "score": env.score, "max_tile": int(env.board.max()), "moves": moves})
 
-    os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)
-    with open(csv_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["game", "score", "max_tile", "moves"])
-        writer.writeheader()
-        writer.writerows(rows)
+    def policy(state, valid_actions):
+        return agent.act(
+            state,
+            explore=False,
+            valid_actions=valid_actions,
+        )
 
-    print(f"Games evaluated: {games}")
-    print(f"Mean score:      {np.mean(scores):.1f}")
-    print(f"Median score:    {np.median(scores):.1f}")
-    print(f"Mean max tile:   {np.mean(tiles):.1f}")
-    print(f"Reached 2048:    {100*np.mean(np.array(tiles) >= 2048):.1f}%")
-    print(f"Reached 1024:    {100*np.mean(np.array(tiles) >= 1024):.1f}%")
-    print(f"Mean moves:      {np.mean(moves_list):.1f}")
-    print(f"Per-game results saved to {csv_path}")
+    metadata = checkpoint.get("metadata", {})
+    architecture = checkpoint.get(
+        "architecture",
+        metadata.get("model", "dueling_double_dqn"),
+    )
+    agent_id = os.path.basename(os.path.normpath(checkpoint_path))
+    output_dir = os.path.dirname(csv_path) or "."
+    rows, run_metadata = evaluate_policy(
+        policy,
+        config,
+        agent_id=agent_id,
+        checkpoint_path=checkpoint_path,
+        architecture=architecture,
+    )
+    csv_output, json_output = write_results(
+        output_dir,
+        rows,
+        run_metadata,
+    )
+    print(f"Per-game results saved to {csv_output}")
+    print(f"Summary and metadata saved to {json_output}")
+    return rows, run_metadata
 
 
 if __name__ == "__main__":
@@ -48,6 +71,22 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint", default="checkpoints/dqn_2048.pt")
     parser.add_argument("--games", type=int, default=100)
     parser.add_argument("--seed", type=int, default=1000)
-    parser.add_argument("--csv", default="evaluation.csv")
+    parser.add_argument("--seeds", default="")
+    parser.add_argument("--max-moves", type=int, default=5000)
+    parser.add_argument(
+        "--output-dir", default="results/canonical"
+    )
     args = parser.parse_args()
-    evaluate(args.checkpoint, args.games, args.seed, args.csv)
+    explicit_seeds = (
+        [int(value) for value in args.seeds.split(",") if value.strip()]
+        if args.seeds
+        else None
+    )
+    evaluate(
+        args.checkpoint,
+        games=args.games,
+        seed=args.seed,
+        max_moves=args.max_moves,
+        seeds=explicit_seeds,
+        csv_path=os.path.join(args.output_dir, "games.csv"),
+    )
